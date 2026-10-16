@@ -1,0 +1,7 @@
+node_modules/
+test-artifacts/
+.DS_Store
+*.log
+.env
+.env.*
+*.zip

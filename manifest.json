@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Apple · 页面抢购助手",
+  "version": "0.3.0",
+  "description": "通过官网页面按钮完成购买流程，等待入口、自动重试、订单提交后停在待付款。",
+  "minimum_chrome_version": "120",
+  "permissions": ["storage", "alarms", "notifications"],
+  "host_permissions": ["https://www.apple.com.cn/*", "https://*.www.apple.com.cn/*"],
+  "background": {"service_worker": "background.mjs", "type": "module"},
+  "action": {"default_title": "Apple · 页面抢购助手", "default_popup": "panel.html", "default_icon": {"16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png"}},
+  "icons": {"16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png"},
+  "content_scripts": [
+    {"matches": ["https://www.apple.com.cn/*", "https://*.www.apple.com.cn/shop/*"], "js": ["content.js"], "run_at": "document_idle"},
+    {"matches": ["https://www.apple.com.cn/shop/*", "https://*.www.apple.com.cn/shop/*"], "js": ["checkout.js"], "run_at": "document_idle"}
+  ],
+  "web_accessible_resources": [{"resources": ["panel.html", "panel.css", "panel.js"], "matches": ["https://www.apple.com.cn/*", "https://*.www.apple.com.cn/*"]}],
+  "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none';"}
+}

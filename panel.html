@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Apple · 抢购助手</title><link rel="stylesheet" href="panel.css"><script src="panel.js" defer></script></head>
+<body>
+  <main class="panel" aria-label="Apple 抢购助手">
+    <header><div class="brand"><span class="bag-icon" aria-hidden="true">↗</span><strong>Apple · 抢购助手</strong><small>v0.3</small></div><button class="icon-button" id="collapse" title="收起" aria-label="收起面板">−</button></header>
+    <section class="status-card" aria-live="polite"><div class="status-line"><span id="status-dot" class="status-dot"></span><strong id="status-title">准备就绪</strong><span id="status-tag" class="tag">页面点击模式</span></div><p id="status-description">选好规格，准备开始。</p><div class="next-line"><span id="last-check">尚未检查页面</span><span id="next-check">等待开始</span></div></section>
+    <section class="metrics" aria-label="执行统计"><div><span>页面检查</span><strong id="scans">0</strong></div><div><span>已点按钮</span><strong id="clicks">0</strong></div><div><span>入口刷新</span><strong id="refreshes">0</strong></div></section>
+    <section class="product"><div class="section-top"><span>本次目标 · 数量 1</span><button class="text-button" id="configure">配置 ↗</button></div><h1 id="product-name">iPhone Duo 1TB 星光白色</h1><p id="product-meta">MK2T4CH/A</p><div class="product-tags"><span id="fulfillment-label">送货上门</span><span id="payment-label">支付宝</span><span id="submit-label">确认页暂停</span></div></section>
+    <section class="workflow" aria-label="购买流程"><div class="section-top"><span>页面流程</span><span id="stage-label">等待开始</span></div><ol id="workflow-list"></ol></section>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <footer><div class="actions"><button id="toggle" class="button primary">开始抢购</button><button id="resume" class="button secondary">继续</button></div><div class="footer-links"><button id="open-product">打开商品</button><span>·</span><button id="open-bag">购物袋</button><span>·</span><button id="check-now">检查页面</button><button id="new-run" title="仅重置本机流程状态，不清除官网购物袋或订单" hidden>新任务</button><button id="test-notification" title="测试系统提醒" aria-label="测试系统提醒">♧</button></div><p id="fineprint" class="fineprint">仅操作官网页面 · 提交订单后停止 · 付款由你完成</p></footer>
+  </main>
+  <dialog id="settings"><form id="settings-form"><div class="dialog-heading"><div><span class="eyebrow">PAGE CLICK MODE</span><h2>设置本次抢购</h2></div><button type="button" class="icon-button" id="close-settings" aria-label="关闭配置">×</button></div>
+    <label>商品预设<select id="preset"><option value="duo">目标：iPhone Duo 1TB 星光白色</option><option value="test">测试：iPhone 18 Pro Max 1TB 冰川蓝色</option><option value="custom">自定义商品编号</option></select></label>
+    <label>完整商品编号<input id="part-number" required maxlength="24" spellcheck="false" autocomplete="off"></label>
+    <label>所选规格商品页<input id="product-url" type="url" required maxlength="1000" placeholder="https://www.apple.com.cn/shop/product/…"></label>
+    <p class="field-help">从所选规格页开始，检查“添加到购物袋”等实际按钮。插件不直接请求库存或下单接口。</p>
+    <div class="form-row"><label>收货方式<select id="fulfillment"><option value="delivery">送货上门</option><option value="pickup">门店自提（手动选店）</option></select></label><label>待付款渠道<select id="payment-method"><option value="alipay">支付宝</option><option value="wechat">微信支付</option></select></label></div>
+    <div class="form-row"><label>重试间隔 / 秒<input id="retry-seconds" type="number" min="3" max="30" step="1" required></label><label>入口最多刷新<input id="max-refreshes" type="number" min="0" max="300" step="1" required></label></div>
+    <p class="field-help">刷新次数 0 表示持续等待。仅在尚未加入购物袋、入口无法操作时刷新；登录、验证码、条款或下单结果不确定时暂停。</p>
+    <label>订单总额上限 / 元<input id="max-total" type="number" min="0" max="1000000" step="0.01" placeholder="允许提交订单时必须填写"></label>
+    <label class="checkbox"><input id="allow-submit" type="checkbox"><span>允许按上述金额上限提交订单，停在待付款</span></label>
+    <details id="shipping-details"><summary>游客收货信息 <small>可选 · 仅保存在本机</small></summary><p class="field-help">填写后可协助填入官网表单；留空则停下等你填写。验证码、账号密码和付款资料由你在官网处理。</p>
+      <div class="form-row"><label>姓氏<input id="last-name" maxlength="30" autocomplete="off"></label><label>名字<input id="first-name" maxlength="30" autocomplete="off"></label></div>
+      <div class="form-row"><label>省 / 直辖市<input id="province" maxlength="30" placeholder="省份或直辖市" autocomplete="off"></label><label>城市<input id="city" maxlength="30" placeholder="城市" autocomplete="off"></label></div>
+      <label>区 / 县<input id="district" maxlength="40" placeholder="区县" autocomplete="off"></label><label>详细地址<input id="detail-address" maxlength="70" autocomplete="off"></label>
+      <label>收件人手机<input id="recipient-phone" type="tel" inputmode="numeric" maxlength="11" autocomplete="off"></label><label>联系人手机<input id="contact-phone" type="tel" inputmode="numeric" maxlength="11" autocomplete="off"></label><label>通知邮箱<input id="email" type="email" maxlength="160" autocomplete="off"></label>
+    </details>
+    <p class="settings-note">“继续”会重新检查当前步骤。若上一次点击结果不确定，先在官网核对购物袋及订单，再恢复；插件不会再次点击相同的不确定动作。</p>
+    <p id="settings-error" class="form-error" role="alert" hidden></p><button id="save-settings" type="submit" class="button primary wide">保存配置</button>
+  </form></dialog>
+</body></html>

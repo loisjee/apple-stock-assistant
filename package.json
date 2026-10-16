@@ -1,0 +1,9 @@
+{
+  "name": "shike-apple-stock-assistant",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Page-only Apple China checkout assistant with entry retries and compact floating panel",
+  "scripts": {"test": "node --test tests/*.test.mjs"},
+  "engines": {"node": ">=20"},
+  "devDependencies": {"playwright": "1.64.1"}
+}
