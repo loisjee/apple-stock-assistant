@@ -5,7 +5,7 @@ import { createPickupBrowser, isReadonlyProductUrl } from '../server/browser.mjs
 const target = { partNumber: 'MK2T4CH/A', productUrl: 'https://www.apple.com.cn/shop/product/MK2T4CH/A', productName: 'iPhone Duo 1TB 星光白色', address: '200030', maxStores: 10 };
 const storeRows = '<li data-store-id="R001"><h3>Apple 上海环贸 iapm</h3><p class="store-address">上海市徐汇区示例路 1 号</p><p>5.32 km</p><p class="availability">今天可取货 店内取货</p><input type="radio" onclick="window.purchaseClicks++"></li><li data-store-id="R002"><h3>Apple 静安</h3><p>5.83 km</p><p class="availability">不可取货</p></li>';
 function fixtureHtml(stale = false) {
-  return `<html lang="zh-CN"><head><title>Pickup fixture only</title></head><body><main><h1>iPhone Duo 1TB 星光白色</h1><button onclick="window.purchaseClicks++">添加到购物袋</button><button onclick="document.querySelector('#pickup').hidden=false">查看供货情况</button></main><section role="dialog" aria-label="iPhone 供货情况" id="pickup" hidden><h2>iPhone 供货情况</h2><p>显示此地提供的选项：<button id="location">100000</button></p><form onsubmit="return false"><label>邮政编码<input id="postal" value="100000"></label><button type="button" onclick="window.searches++;document.querySelector('#location').textContent=document.querySelector('#postal').value;${stale ? '' : 'document.querySelector(\'#stores\').innerHTML=window.newRows;'}">搜索</button></form><ul id="stores" aria-label="门店"><li><h3>Apple 旧地址门店</h3><p>不可取货</p></li></ul><button onclick="window.purchaseClicks++">继续</button></section><script>window.purchaseClicks=0;window.searches=0;window.newRows=${JSON.stringify(storeRows)};</script></body></html>`;
+  return `<html lang="zh-CN"><head><title>Pickup fixture only</title></head><body><main><h1>iPhone Duo 1TB 星光白色</h1><button onclick="window.purchaseClicks++">添加到购物袋</button><button id="pickup-open" onclick="document.querySelector('#pickup').hidden=false">查看供货情况</button></main><section role="dialog" aria-label="iPhone 供货情况" id="pickup" hidden><h2>iPhone 供货情况</h2><span>iPhone Duo 1TB 星光白色</span><p>显示此地提供的选项：<button id="location">100000</button></p><form onsubmit="return false"><label>邮政编码<input id="postal" value="100000"></label><button type="button" onclick="window.searches++;document.querySelector('#location').textContent=document.querySelector('#postal').value;${stale ? '' : 'document.querySelector(\'#stores\').innerHTML=window.newRows;'}">搜索</button></form><ul id="stores" aria-label="门店"><li><h3>Apple 旧地址门店</h3><p>不可取货</p></li></ul><button onclick="window.purchaseClicks++">继续</button></section><script>window.purchaseClicks=0;window.searches=0;window.newRows=${JSON.stringify(storeRows)};</script></body></html>`;
 }
 let chromium;
 try { ({ chromium } = await import('playwright')); } catch { /* browser fixtures optional for source-only installs */ }
@@ -15,7 +15,7 @@ async function launch() {
 async function fixtureRunner(t, extra = {}) {
   const underlying = await launch();
   const contexts = [], pages = [], requests = [];
-  const control = { stale: false, redirect: null, visibleSku: null, broken: false };
+  const control = { stale: false, redirect: null, visibleSku: null, broken: false, delayedOpenerMs: 0, human: false, fulfillmentStatus: 0, noOpener: false, forceReadinessTimeout: false };
   const wrapped = {
     isConnected: () => underlying.isConnected(),
     async newContext(options) {
@@ -23,7 +23,11 @@ async function fixtureRunner(t, extra = {}) {
       context.on('page', page => pages.push(page));
       await context.route('**/*', route => {
         requests.push(route.request().url());
-        const html = (control.broken ? '<html><head><meta charset="utf-8"></head><body><h1>商店暂不可用</h1></body></html>' : fixtureHtml(control.stale)).replace('<main>', `<main>${control.visibleSku ? `<p data-autom="product-sku">${control.visibleSku}</p>` : ''}`);
+        if (new URL(route.request().url()).pathname === '/shop/fulfillment-messages') return route.fulfill({ status: control.fulfillmentStatus || 200, contentType: 'application/json', body: '{}' });
+        let html = (control.human ? '<html><body><h1>安全验证</h1><p>请完成验证码</p></body></html>' : control.broken ? '<html><head><meta charset="utf-8"></head><body><h1>商店暂不可用</h1></body></html>' : fixtureHtml(control.stale)).replace('<main>', `<main>${control.visibleSku ? `<p data-autom="product-sku">${control.visibleSku}</p>` : ''}`);
+        if (control.noOpener) html = html.replace('id="pickup-open"', 'id="pickup-open" hidden');
+        if (control.fulfillmentStatus) html = html.replace('</body>', '<script>window.expectedFulfillment=true;fetch("/shop/fulfillment-messages?fae=true").then(()=>{window.fulfillmentCompleted=true});</script></body>');
+        if (control.delayedOpenerMs) html = html.replace('id="pickup-open"', 'id="pickup-open" hidden').replace('</body>', `<script>setTimeout(()=>{document.querySelector('#pickup-open').hidden=false},${control.delayedOpenerMs});</script></body>`);
         return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html });
       });
       // Redirect fixture: model the browser's final URL without issuing a 302 to
@@ -33,6 +37,10 @@ async function fixtureRunner(t, extra = {}) {
           const current = await object.newPage();
           return new Proxy(current, { get(actual, property) {
             if (property === 'goto') return (url, opts) => actual.goto(control.redirect && url === target.productUrl ? control.redirect : url, opts);
+            if (property === 'waitForFunction' && control.forceReadinessTimeout) return async () => {
+              await actual.waitForFunction(() => document.readyState === 'complete' && (!window.expectedFulfillment || window.fulfillmentCompleted), null, { timeout: 5000 });
+              const error = new Error('fixture readiness timeout'); error.name = 'TimeoutError'; throw error;
+            };
             const value = Reflect.get(actual, property); return typeof value === 'function' ? value.bind(actual) : value;
           } });
         };
@@ -153,10 +161,52 @@ test('server browser rejects a wrong SKU rendered after a safe generic buy redir
 
 
 test('server browser refreshes a retryable failed product page on its next check rather than retaining a maintenance screen', { skip: !chromium }, async t => {
-  const { runner, control, contexts } = await fixtureRunner(t);
+  const { runner, control, contexts } = await fixtureRunner(t, { checkTimeoutMs: 600 });
   control.broken = true;
   const missing = await runner.check(target); assert.equal(missing.stage, 'waitingPage'); assert.equal(missing.retryable, true);
   control.broken = false;
   const recovered = await runner.check(target); assert.equal(recovered.stage, 'checked', JSON.stringify(recovered));
   assert.equal(contexts.length, 2);
+});
+
+
+test('server browser waits for a pickup entry rendered after 2.5 seconds before starting the DOM check', { skip: !chromium }, async t => {
+  const { runner, control, pages } = await fixtureRunner(t);
+  control.delayedOpenerMs = 3200;
+  const result = await runner.check(target);
+  assert.equal(result.stage, 'checked', JSON.stringify(result));
+  assert.equal(await pages[0].evaluate(() => window.searches), 1);
+  assert.equal(await pages[0].evaluate(() => window.purchaseClicks), 0);
+});
+
+test('an official page-owned fulfillment HTTP failure reports a safe diagnostic and resets on the next check', { skip: !chromium }, async t => {
+  const { runner, control, requests } = await fixtureRunner(t);
+  Object.assign(control, { fulfillmentStatus: 541, noOpener: true, forceReadinessTimeout: true });
+  const failed = await runner.check(target);
+  assert.equal(failed.stage, 'waitingPage'); assert.equal(failed.retryable, true); assert.equal(failed.stores.length, 0);
+  assert.deepEqual(failed.diagnostic, { step: 'server-browser', code: 'OFFICIAL_HTTP_ERROR', httpStatus: 541 });
+  assert.match(failed.reason, /HTTP 541/); assert.doesNotMatch(JSON.stringify(failed), /https:|fulfillment-messages|fae=/);
+  assert.ok(requests.some(url => new URL(url).pathname === '/shop/fulfillment-messages'), 'only the fixture page itself requests the fulfillment resource');
+  control.fulfillmentStatus = 0;
+  const next = await runner.check(target); assert.equal(next.diagnostic.code, 'READINESS_TIMEOUT'); assert.equal('httpStatus' in next.diagnostic, false);
+});
+
+test('server browser cancels while waiting for readiness without waiting for the delayed entry', { skip: !chromium }, async t => {
+  const { runner, control, pages } = await fixtureRunner(t);
+  control.delayedOpenerMs = 10000;
+  const controller = new AbortController(), pending = runner.check(target, { signal: controller.signal });
+  while (!pages.length) await new Promise(resolve => setTimeout(resolve, 10));
+  await pages[0].waitForFunction(target => typeof globalThis.__shikePickupAdapter?.ready === 'function' && !globalThis.__shikePickupAdapter.ready(target), target);
+  const before = Date.now(); controller.abort();
+  assert.equal((await pending).stage, 'cancelled'); assert.ok(Date.now() - before < 2000);
+  control.delayedOpenerMs = 0;
+  assert.equal((await runner.check(target)).stage, 'checked');
+});
+
+test('server readiness immediately lets a CAPTCHA page reach the human-action gate', { skip: !chromium }, async t => {
+  const { runner, control } = await fixtureRunner(t);
+  control.human = true;
+  const before = Date.now(), result = await runner.check(target);
+  assert.equal(result.stage, 'human'); assert.equal(result.requiresHuman, true); assert.equal(result.stores.length, 0);
+  assert.ok(Date.now() - before < 3000, 'human verification must not wait the normal readiness timeout');
 });

@@ -74,6 +74,14 @@ test('errors retain last good data and availability dedupe survives unknown resu
   const saved=JSON.parse(await readFile(w.storePath,'utf8'));const restored=await fixture(t,{saved,check:()=>result('available')});await restored.monitor.checkNow();assert.equal(restored.calls.notifications.length,0);assert.equal(restored.monitor.state().stale,false);
 });
 
+test('validated official HTTP failures are visible errors, preserve stale inventory and never re-arm alerts',async t=>{
+  let response=result('available');const w=await fixture(t,{check:()=>response});await w.save();await w.monitor.checkNow();assert.equal(w.calls.notifications.length,1);
+  response={ok:true,stage:'waitingPage',stores:[],retryable:true,reason:'untrusted secret response text',diagnostic:{code:'OFFICIAL_HTTP_ERROR',httpStatus:541}};await w.monitor.checkNow();
+  assert.equal(w.monitor.state().status,'error');assert.match(w.monitor.state().error,/HTTP 541/);assert.equal(w.monitor.state().stale,true);assert.equal(w.monitor.state().stores[0].availability,'available');assert.doesNotMatch(JSON.stringify(w.monitor.state()),/untrusted secret/);
+  for(const diagnostic of [{code:'OFFICIAL_HTTP_ERROR',httpStatus:'541'},{code:'OFFICIAL_HTTP_ERROR',httpStatus:600},{code:'OFFICIAL_HTTP_ERROR',httpStatus:399},{code:'OTHER_CODE',httpStatus:541}]){response={ok:true,stores:[],diagnostic};await w.monitor.checkNow();assert.doesNotMatch(w.monitor.state().error,/HTTP /);}
+  response=result('available');await w.monitor.checkNow();assert.equal(w.calls.notifications.length,1,'transport failures do not mean the store became unavailable');
+});
+
 test('notification failure is retried while dashboard inventory remains available',async t=>{
   let first=true;const w=await fixture(t,{check:()=>result('available'),notify:()=>{if(first){first=false;throw new Error('secret notification URL');}return {ok:true};}});await w.save();await w.monitor.checkNow();
   assert.equal(w.monitor.state().status,'available');assert.equal(w.monitor.state().stores[0].availability,'available');assert.match(w.monitor.state().notification.lastError,/通知发送失败/);assert.doesNotMatch(JSON.stringify(w.monitor.state()),/secret notification/);

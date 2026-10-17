@@ -100,7 +100,7 @@ export class PickupMonitor{
     this._data.lastCheckAt=this.now();this._data.checks++;
     if(result?.requiresHuman){this._data.running=false;this._data.status='paused';this._data.stale=this._data.stores.length>0;this._data.notice='官网要求人工处理安全验证或位置确认，监控已暂停。';this._data.nextCheckAt=0;this._history('paused',this._data.notice);await this._persist();return this.state();}
     const stores=result?.ok===true?cleanStores(result.stores,config.maxStores):[];
-    if(!stores.length)return this._failure(generation,'官网暂未展示可识别的附近门店，保留上次结果并稍后重试。',{counted:true});
+    if(!stores.length){const status=result?.diagnostic?.httpStatus,officialFailure=result?.diagnostic?.code==='OFFICIAL_HTTP_ERROR'&&Number.isInteger(status)&&status>=400&&status<=599;return this._failure(generation,officialFailure?`官网供货信息请求失败（HTTP ${status}），本轮没有库存结果。`:'官网暂未展示可识别的附近门店，保留上次结果并稍后重试。',{counted:true});}
     this._data.stores=stores;this._data.stale=false;this._data.error='';const available=stores.filter(store=>store.availability==='available');this._data.status=available.length?'available':'watching';
     this._data.notice=available.length?`官网显示 ${available.length} 家门店可自提，请到官网核对。`:'已检查附近门店，继续等待可自提库存。';this._data.nextCheckAt=this._data.running?this.now()+config.intervalSeconds*1000:0;
     const newlyAvailable=[];

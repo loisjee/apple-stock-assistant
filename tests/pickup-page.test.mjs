@@ -17,7 +17,7 @@ test('pickup adapter only accepts specific Apple product pages, never cart, chec
 
 test('only explicit per-store pickup status is available; negative phrases override positive substrings', () => {
   for (const value of ['今天可取货 店内取货', '可于明天提供', '取货：今天', 'Available today']) assert.equal(h.availability(value), 'available');
-  for (const value of ['不可取货', '目前无货', '取货：今天 暂不提供取货', 'not available for pickup']) assert.equal(h.availability(value), 'unavailable');
+  for (const value of ['不可取货', '目前无货', '暂无供应', '取货：今天 暂不提供取货', 'not available for pickup']) assert.equal(h.availability(value), 'unavailable');
   for (const value of ['查看供货情况', '店内取货', 'Apple 上海环贸 iapm', '正在加载', '今天']) assert.equal(h.availability(value), 'unknown');
   assert.equal(h.regionMatches('四川', '四川省成都市锦江区'), true);
   assert.equal(h.regionMatches('上海', '上海市徐汇区'), true);
@@ -30,7 +30,7 @@ try { ({ chromium } = await import('playwright')); } catch { /* pure guards rema
 const skuUrl = 'https://www.apple.com.cn/shop/product/MK2T4CH/A';
 const row = (name, status, distance = '2.3 km') => `<li data-store-id="${name.replace(/\s/g, '')}"><h3>${name}</h3><p class="store-address">上海市徐汇区示例路 1 号</p><p>${distance}</p><p class="availability">${status}</p><input type="radio" value="${name}" onclick="window.storeClicks++"></li>`;
 const list = () => row('Apple 上海环贸 iapm', '今天可取货 店内取货') + row('Apple 静安', '不可取货', '5.9 km') + row('Apple 南京东路', '正在查询', '6.5 km');
-const shell = dialog => `<main><h1>iPhone Duo 1TB 星光白色</h1><button onclick="window.cartClicks++">添加到购物袋</button><button id="open" onclick="document.querySelector('#pickup').hidden=false">查看供货情况</button></main><section id="pickup" role="dialog" aria-label="iPhone 供货情况" hidden><h2>iPhone 供货情况</h2>${dialog}<button onclick="window.continueClicks++">继续</button></section>`;
+const shell = dialog => `<main><h1>iPhone Duo 1TB 星光白色</h1><button onclick="window.cartClicks++">添加到购物袋</button><button id="open" onclick="document.querySelector('#pickup').hidden=false">查看供货情况</button></main><section id="pickup" role="dialog" aria-label="iPhone 供货情况" hidden><h2>iPhone 供货情况</h2><p>iPhone Duo 1TB 星光白色</p>${dialog}<button onclick="window.continueClicks++">继续</button></section>`;
 
 async function fixture(t, html, url = skuUrl) {
   let browser;
@@ -219,6 +219,9 @@ test('Chromium pickup: explicit standalone bootstrap works without chrome runtim
   await page.addScriptTag({ content: source });
   assert.equal(await page.evaluate(() => globalThis.__shikePickupServerInit), undefined, 'explicit init marker is consumed');
   assert.equal(await page.evaluate(() => typeof globalThis.chrome?.runtime), 'undefined');
+  assert.equal(await page.evaluate(() => globalThis.__shikePickupAdapter.ready({ partNumber: 'MK2T4CH/A' })), true);
+  assert.equal(await page.locator('#pickup').isVisible(), false, 'server readiness is read-only and must not open the pickup dialog');
+  assert.equal(await page.evaluate(() => window.searches), 0);
   const check = token => page.evaluate(token => globalThis.__shikePickupAdapter.check({ partNumber: 'MK2T4CH/A', address: '200030', maxStores: 10 }, token), token);
   const first = await check('standalone-one'); assert.equal(first.stage, 'checked', JSON.stringify(first));
   assert.equal((await check('standalone-two')).stage, 'checked');
@@ -232,4 +235,62 @@ test('Chromium pickup: extension listener does not publish the standalone page A
   await page.evaluate(() => { globalThis.__shikePickupServerInit = true; });
   await page.addScriptTag({ content: source });
   assert.equal(await page.evaluate(() => typeof globalThis.__shikePickupAdapter), 'undefined');
+});
+
+test('Chromium pickup: verified white Duo 512GB SKU accepts 512GB and blocks 1TB or another color before querying stores', { skip: !chromium }, async t => {
+  const options = `<div class="product-summary"><span id="duo-summary">iPhone Duo 512GB 星光白色</span></div><fieldset><label><input type="radio" name="color" value="white" checked>星光白色</label><label><input type="radio" name="color" id="night-sky" value="night">夜空色</label><label><input type="radio" name="capacity" value="512gb" checked>512GB<sup><a href="#footnote-1" aria-label="脚注 1">1</a></sup></label><label><input type="radio" name="capacity" value="1tb" id="one-tb">1TB</label></fieldset>`;
+  const { page, send } = await fixture(t, postalFixture().replace('<h2>iPhone 供货情况</h2>', `<h2>iPhone 供货情况</h2>${options}`), 'https://www.apple.com.cn/shop/buy-iphone/iphone-duo/mk2p4ch/a');
+  const config = { partNumber: 'MK2P4CH/A', productName: 'iPhone Duo 512GB 星光白色', address: '200030', maxStores: 10 };
+  const correct = await send('200030', { config });
+  assert.equal(correct.stage, 'checked', JSON.stringify(correct)); assert.equal(correct.stores[0].availability, 'available');
+  await page.locator('#one-tb').check();
+  const wrongCapacity = await send('200030', { config });
+  assert.equal(wrongCapacity.stage, 'productMismatch'); assert.equal(wrongCapacity.diagnostic.code, 'CONFIG_CAPACITY');
+  await page.locator('input[name="capacity"][value="512gb"]').check(); await page.locator('#night-sky').check();
+  const wrongColor = await send('200030', { config });
+  assert.equal(wrongColor.stage, 'productMismatch'); assert.equal(wrongColor.diagnostic.code, 'CONFIG_COLOR');
+  await page.locator('input[name="color"][value="white"]').check();
+  await page.locator('#duo-summary').evaluate(node => { node.textContent = 'iPhone Duo 1TB 星光白色'; });
+  const wrongSummary = await send('200030', { config }); assert.equal(wrongSummary.stage, 'productMismatch'); assert.equal(wrongSummary.diagnostic.code, 'CONFIG_MODELSUMMARY');
+  await page.locator('#duo-summary').evaluate(node => { node.textContent = ''; });
+  const noSummary = await send('200030', { config }); assert.equal(noSummary.stage, 'productMismatch'); assert.equal(noSummary.diagnostic.code, 'CONFIG_MODELSUMMARY');
+  await page.locator('#duo-summary').evaluate(node => { node.textContent = 'iPhone Duo 512GB 星光白色'; node.parentElement.append(node.cloneNode(true)); });
+  const duplicateSummary = await send('200030', { config }); assert.equal(duplicateSummary.stage, 'productMismatch'); assert.equal(duplicateSummary.diagnostic.code, 'CONFIG_MODELSUMMARY');
+  assert.equal(await page.evaluate(() => window.searches), 1, 'wrong capacity, color, missing or ambiguous model summary must not query target stock');
+  assert.deepEqual(await page.evaluate(() => [window.cartClicks, window.continueClicks, window.storeClicks]), [0, 0, 0]);
+});
+
+
+test('Chromium pickup: fresh guest product aria opener selects a first location and expands the exact collapsed unavailable-store summary on each fresh query', { skip: !chromium }, async t => {
+  const options = '<span>iPhone Duo 512GB 星光白色</span><fieldset><label><input type="radio" name="color" checked>星光白色</label><label><input type="radio" name="capacity" checked>512GB</label></fieldset>';
+  const initial = shell(`${options}<p>显示此地提供的选项：<button id="location">选择地点</button></p><p>选择一个地点，查看附近零售店的供货情况。</p><div id="regions" hidden></div><div id="stores" aria-label="门店"></div>`)
+    .replace('<button id="open"', '<button id="open" aria-label="查看供货情况 iPhone Duo 512GB 星光白色"');
+  const { page, send } = await fixture(t, initial, 'https://www.apple.com.cn/shop/buy-iphone/iphone-duo/mk2p4ch/a');
+  const rows = Array.from({ length: 12 }, (_, index) => row(index === 0 ? 'Apple 五角场' : index === 1 ? 'Apple 浦东' : `Apple 示例门店${index + 1}`, '暂无供应 店内取货', index === 0 ? '1.77 km' : `${index + 5}.14 km`).replace('<input type="radio"', '<input type="radio" disabled')).join('');
+  await page.evaluate(stores => {
+    window.expandClicks = 0; window.locationSelections = 0;
+    const regions = document.querySelector('#regions');
+    const showDistrict = () => {
+      regions.innerHTML = '<button role="tab" aria-selected="false" id="reset-province">上海 省份</button><button role="tab" aria-selected="true">区</button><button id="district">杨浦区</button>';
+      document.querySelector('#reset-province').onclick = showProvince;
+      document.querySelector('#district').onclick = () => {
+        window.locationSelections++; regions.hidden = true; document.querySelector('#location').textContent = '上海';
+        document.querySelector('#stores').innerHTML = '<button id="unavailable-summary">距离最近的 12 家零售店今日无货。</button><ul id="collapsed-stores" hidden>' + stores + '</ul>';
+        document.querySelector('#unavailable-summary').onclick = () => { window.expandClicks++; document.querySelector('#collapsed-stores').hidden = false; };
+      };
+    };
+    const showProvince = () => {
+      regions.innerHTML = '<button role="tab" aria-selected="true">省份</button><button id="province">上海</button>';
+      document.querySelector('#province').onclick = showDistrict;
+    };
+    showProvince(); document.querySelector('#location').onclick = () => { regions.hidden = false; };
+  }, rows);
+  const config = { partNumber: 'MK2P4CH/A', productName: 'iPhone Duo 512GB 星光白色', address: '上海市杨浦区', maxStores: 12 };
+  const first = await send(config.address, { config }); assert.equal(first.stage, 'checked', JSON.stringify(first));
+  assert.equal(first.stores.length, 12); assert.equal(first.stores[0].name, 'Apple 五角场'); assert.equal(first.stores[0].distanceText, '1.77 km');
+  assert.ok(first.stores.every(store => store.availability === 'unavailable'));
+  const second = await send(config.address, { config }); assert.equal(second.stage, 'checked', JSON.stringify(second));
+  assert.ok(second.stores.every(store => store.availability === 'unavailable'));
+  assert.deepEqual(await page.evaluate(() => [window.expandClicks, window.locationSelections]), [2, 2], 'each repeated location query must load then expand its new collapsed results');
+  assert.deepEqual(await page.evaluate(() => [window.cartClicks, window.continueClicks, window.storeClicks]), [0, 0, 0]);
 });

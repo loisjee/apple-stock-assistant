@@ -5,12 +5,12 @@
   const canon = value => tidy(value).replace(/[\s·，,。]/g, '').toLowerCase();
   const buttons = 'button,[role="button"],input[type="button"],input[type="submit"]';
   const rowSelector = 'li,[role="listitem"],[role="radio"],input[type="radio"],[data-autom*="store"],[class*="store"],[class*="Store"]';
-  const NO_STOCK = /不可取货|无法取货|不提供.{0,8}取货|暂不.{0,8}取货|目前无货|暂时无货|无现货|缺货|无货|暂不可用|not available|unavailable|out of stock/i;
+  const NO_STOCK = /不可取货|无法取货|不提供.{0,8}取货|暂不.{0,8}取货|目前无货|暂时无货|暂无供应|无现货|缺货|无货|暂不可用|not available|unavailable|out of stock/i;
   const YES_STOCK = /(?:可于.{0,24}(?:提供|取货)|(?:今天|明天|即日|当天)(?:可|即可)?取货|(?:可|可以)(?:店内)?取货|店内有货|现货供应|可提供取货|(?:取货|pickup)\s*[:：]\s*(?:今天|明天|today|tomorrow)|available\s+(?:today|tomorrow|for pickup))/i;
   const DISTANCE = /(?:\d+(?:[.,]\d+)?)\s*(?:公里|千米|km|米|miles?)(?![a-z])/i;
   const LOCATION_LABEL = /邮政编码|邮编|所在城市|城市或|所在地区|位置|地址|postal|zip|location|city/i;
   const REGION_SUFFIX = /(?:特别行政区|维吾尔自治区|壮族自治区|回族自治区|自治区|自治州|地区|省|市|区|县|旗)$/;
-  const KNOWN_PRODUCTS = Object.freeze({ 'MK2T4CH/A': 'iPhone Duo 1TB 星光白色', 'MJYJ4CH/A': 'iPhone 18 Pro Max 1TB 冰川蓝色' });
+  const KNOWN_PRODUCTS = Object.freeze({ 'MK2T4CH/A': 'iPhone Duo 1TB 星光白色', 'MK2P4CH/A': 'iPhone Duo 512GB 星光白色', 'MJYJ4CH/A': 'iPhone 18 Pro Max 1TB 冰川蓝色' });
   const STOP_TEXT = /(?:安全验证|验证码|人机验证|滑动验证|请证明你|验证你是真人|完成验证|verify you are human|captcha|同意并继续|隐私政策.*中国境外|登录你的 Apple|登录你的Apple|sign in to your apple)/i;
 
   function allowedPage(value) {
@@ -149,31 +149,41 @@
     const associated = [...node.labels || []].map(productLabelText).join(' ');
     return tidy(node.getAttribute('aria-label') || labelled || associated || productLabelText(node) || node.value).replace(/\s*(?:脚注|footnote)\s*\d+\s*$/i, '').trim();
   }
+  function exactProductSummary(root, expected) {
+    const matches = all(root, 'h1,h2,h3,h4,p,span,div,[data-autom*="productName"],[data-autom*="product-name"]')
+      .filter(node => canon(tidy(node.innerText || node.textContent)) === canon(expected));
+    // A summary's layout wrappers repeat its text. Count only its deepest exact
+    // match, while separate summaries/recommendations remain ambiguous.
+    const leaves = matches.filter(node => !matches.some(child => child !== node && node.contains(child)));
+    return !!expected && leaves.length === 1;
+  }
   function configurationMatches(root, config, diagnostic = {}) {
     const mismatch = dimension => { diagnostic.dimension = dimension; return false; };
     if (!skuEvidence(config.partNumber)) return mismatch('sku');
     const sku = tidy(config.partNumber).toUpperCase();
     const expected = tidy(KNOWN_PRODUCTS[sku] || config.productName);
     const known = KNOWN_PRODUCTS[sku];
+    const summaryMatches = exactProductSummary(root, expected);
     if (!known) {
       if (!expected) return mismatch('nameMissing');
-      const summaries = all(root, 'h1,h2,h3,h4,[data-autom*="productName"],[data-autom*="product-name"]')
-        .filter(node => canon(label(node)) === canon(expected));
-      if (summaries.length !== 1) return mismatch('productSummary');
+      if (!summaryMatches) return mismatch('productSummary');
     }
     const dimensions = [...root.querySelectorAll('input[type="radio"],[role="radio"]')]
       .filter(node => visible(node) || [...node.labels || []].some(visible))
       .map(selectedLabel).filter(value => /iPhone|(?:^|\s)\d+\s*(?:GB|TB)(?:$|\s)|色/i.test(value));
-    if (!dimensions.length) return !!known || !!expected;
+    if (!dimensions.length) return summaryMatches || mismatch('modelSummary');
     const checked = [...root.querySelectorAll('input[type="radio"]:checked,[role="radio"][aria-checked="true"],button[aria-pressed="true"]')]
       .filter(node => visible(node) || [...node.labels || []].some(visible)).map(selectedLabel);
     const parts = /^(iPhone.+?)\s+(\d+\s*(?:GB|TB))\s+(.+)$/i.exec(expected);
     if (!parts) return checked.some(value => canon(value) === canon(expected));
     const [model, capacity, color] = parts.slice(1).map(canon);
+    const modelChoices = dimensions.filter(value => /^iPhone/i.test(value));
     const selectedModels = checked.filter(value => /^iPhone/i.test(value));
     const selectedCapacity = checked.filter(value => /^\d+\s*(?:GB|TB)$/i.test(value));
     const selectedColors = checked.filter(value => /色$/.test(value) || canon(value).replace(/色$/, '') === color.replace(/色$/, ''));
-    if (selectedModels.length !== 1 || canon(selectedModels[0]) !== model) return mismatch('model', selectedModels);
+    if (modelChoices.length) {
+      if (selectedModels.length !== 1 || canon(selectedModels[0]) !== model) return mismatch('model');
+    } else if (!summaryMatches) return mismatch('modelSummary');
     if (selectedCapacity.length !== 1 || canon(selectedCapacity[0]) !== capacity) return mismatch('capacity', checked.filter(value => /^\d+\s*(?:GB|TB)/i.test(value)));
     if (selectedColors.length !== 1 || canon(selectedColors[0]).replace(/色$/, '') !== color.replace(/色$/, '')) return mismatch('color', selectedColors);
     return true;
@@ -192,7 +202,17 @@
     return null;
   }
   function opener() {
-    const direct = all(document, buttons).filter(node => /^(?:查看供货情况|查看取货日期|查看取货地点|查看取货选项|查看店内供货情况|查看零售店供货情况|check availability|check pickup availability)$/i.test(label(node)));
+    const caption = /^(?:查看供货情况|查看取货日期|查看取货地点|查看取货选项|查看店内供货情况|查看零售店供货情况|check availability|check pickup availability)$/i;
+    const direct = all(document, buttons).filter(node => {
+      if (caption.test(tidy(node.innerText || node.textContent)) || caption.test(label(node))) return true;
+      if (!/^查看供货情况\s+iPhone.{1,100}$/i.test(label(node))) return false;
+      let parent = node.parentElement;
+      for (let depth = 0; parent && depth < 4; depth++, parent = parent.parentElement) {
+        if (parent === document.body || parent === document.documentElement || tidy(parent.innerText).length > 500) break;
+        if (/取货|店内|零售店|pickup/i.test(tidy(parent.innerText))) return true;
+      }
+      return false;
+    });
     if (direct.length === 1) return direct[0];
     const stores = all(document, buttons).filter(node => {
       if (!/^Apple\s*[^\s]/i.test(label(node)) || /Apple\s*(?:Care|Pay|Store)/i.test(label(node))) return false;
@@ -209,7 +229,7 @@
     return unique(stores);
   }
   function locationControl(root) {
-    const explicit = all(root, buttons).filter(node => /^\d{6}$/.test(label(node)) || /^(?:更改位置|更改地址|选择地区|选择城市|更改邮编|编辑位置|change location|change postal code)$/i.test(label(node)));
+    const explicit = all(root, buttons).filter(node => /^\d{6}$/.test(label(node)) || /^(?:更改位置|更改地址|选择地点|选择地区|选择城市|更改邮编|编辑位置|change location|change postal code)$/i.test(label(node)));
     if (explicit.length) return unique(explicit);
     const contextual = unique(all(root, buttons).filter(node => {
       const text = label(node);
@@ -309,6 +329,9 @@
     const id = tidy(row.getAttribute('data-store-id') || row.getAttribute('data-storeid') || radio?.value || name).slice(0, 80);
     return { id, name, address, distanceText: DISTANCE.exec(text)?.[0] || '', availability: state, availabilityText: (pickupText || '官网未提供可确认的取货状态').slice(0, 260), pickupText };
   }
+  function unavailableSummary(root) {
+    return unique(all(root, buttons).filter(node => /^距离最近的\s*\d+\s*家零售店今日无货[。.]*$/.test(label(node))));
+  }
   function noStores(root) { return /没有(?:找到)?(?:附近的)?(?:Apple\s*Store\s*)?零售店|未找到.{0,16}零售店|附近没有.{0,16}零售店/i.test(tidy(root.innerText)); }
   function readStores(root, maxStores) {
     const stores = storeRows(root).map(parseStore).filter(Boolean);
@@ -316,13 +339,13 @@
     return stores.filter(store => !seen.has(store.id) && seen.add(store.id)).slice(0, maxStores);
   }
   function watchRows(root) {
-    const oldRows = storeRows(root), oldTexts = oldRows.map(rowText);
+    const oldRows = storeRows(root), oldTexts = oldRows.map(rowText), oldSummary = unavailableSummary(root), oldSummaryText = oldSummary ? label(oldSummary) : '';
     let touched = false;
     const observer = new MutationObserver(records => {
       if (records.some(record => oldRows.some(row => row === record.target || row.contains(record.target) || [...record.removedNodes].some(node => node === row || node.nodeType === 1 && node.contains(row))))) touched = true;
     });
     observer.observe(root, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['aria-label', 'value'] });
-    return { disconnect: () => observer.disconnect(), changed: () => touched || oldRows.some((node, index) => !node.isConnected || rowText(node) !== oldTexts[index]) || storeRows(root).some(node => !oldRows.includes(node)), hadRows: oldRows.length > 0 };
+    return { disconnect: () => observer.disconnect(), changed: () => touched || oldRows.some((node, index) => !node.isConnected || rowText(node) !== oldTexts[index]) || storeRows(root).some(node => !oldRows.includes(node)) || unavailableSummary(root) !== oldSummary || oldSummary && (!oldSummary.isConnected || label(oldSummary) !== oldSummaryText), hadRows: oldRows.length > 0 || !!oldSummary };
   }
   function busy(root) { return all(root, '[aria-busy="true"],[role="progressbar"],[data-autom*="loading"],[class*="loading-spinner"],img[alt="loading"],img[aria-label="loading"]').length > 0; }
 
@@ -366,7 +389,7 @@
         run.step = 'query-location';
         await click(run, submit);
         run.step = 'wait-store-list';
-        const ready = await until(run, () => !busy(root) && addressConfirmed(root, address) && (!watcher.hadRows || watcher.changed()) && (readStores(root, run.maxStores).length || noStores(root)), 6500);
+        const ready = await until(run, () => !busy(root) && addressConfirmed(root, address) && (!watcher.hadRows || watcher.changed()) && (readStores(root, run.maxStores).length || noStores(root) || unavailableSummary(root)), 6500);
         return ready ? { ok: true, changed: true } : { ok: false, retryable: true, reason: '尚未核验到新位置对应的门店结果，已忽略可能残留的旧位置列表。' };
       } finally { watcher.disconnect(); }
     }
@@ -396,7 +419,7 @@
             const summary = canon(locationSummary(root));
             const pickerClosed = !all(root, buttons).some(node => /^(?:省份|城市|区县|地区)$/.test(label(node)));
             const changed = !watcher.hadRows || watcher.changed();
-            return !busy(root) && changed && (readStores(root, run.maxStores).length || noStores(root)) && (summary.includes(canon(last)) || (short.length >= 2 && summary.includes(short)) || pickerClosed && (selected.length === 3 || selected.length === 2 && /^(?:北京|上海|天津|重庆)/.test(canon(selected[0])) && /(?:区|县)$/.test(last)));
+            return !busy(root) && changed && (readStores(root, run.maxStores).length || noStores(root) || unavailableSummary(root)) && (summary.includes(canon(last)) || (short.length >= 2 && summary.includes(short)) || pickerClosed && (selected.length === 3 || selected.length === 2 && /^(?:北京|上海|天津|重庆)/.test(canon(selected[0])) && /(?:区|县)$/.test(last)));
           }, 6000);
           if (ready) return { ok: true, changed: true };
         }
@@ -427,6 +450,13 @@
       const result = await setRegion(run, root, run.config.address);
       guard(run);
       if (!result.ok) return response(result.retryable ? 'waitingResults' : 'locationRequired', result.reason, { requiresHuman: !result.retryable, retryable: !!result.retryable, ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}) });
+      const summary = unavailableSummary(root);
+      if (summary && !storeRows(root).length) {
+        run.step = 'expand-unavailable-stores';
+        await click(run, summary);
+        await until(run, () => storeRows(root).length, 3500);
+        guard(run);
+      }
       run.step = 'read-stores';
       const stores = readStores(root, run.maxStores);
       if (!stores.length) {
@@ -464,11 +494,21 @@
     if (active && (!token || token === active.token)) cancelRun(active);
     return { ok: true, cancelled: true };
   }
+  function serverReady(config = {}) {
+    if (!allowedPage(location.href) || stopForHuman()) return true;
+    const entry = findPickupRoot() || opener();
+    if (!entry) return false;
+    if (skuEvidence(config?.partNumber)) return true;
+    // A different explicitly rendered SKU should reach check's mismatch gate
+    // promptly; readiness itself never authorizes a click or reports inventory.
+    return all(document, '[data-autom*="part"],[data-autom*="sku"],[data-part-number],input:checked,option:checked')
+      .some(node => /(?:^|[^A-Z0-9])[A-Z0-9]{5,12}\/A(?:$|[^A-Z0-9])/i.test(`${node.getAttribute('data-part-number') || ''} ${node.value || ''} ${label(node)}`));
+  }
   if (serverInit) {
     // Installed only by an explicit server bootstrap in its dedicated browser.
     // The extension's isolated world never publishes a page-origin command API.
     Object.defineProperty(globalThis, '__shikePickupAdapter', {
-      value: Object.freeze({ check: requestCheck, cancel: requestCancel }), configurable: false, writable: false,
+      value: Object.freeze({ check: requestCheck, cancel: requestCancel, ready: serverReady }), configurable: false, writable: false,
     });
   }
   if (runtime?.onMessage) runtime.onMessage.addListener((message, sender, sendResponse) => {

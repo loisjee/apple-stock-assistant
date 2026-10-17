@@ -39,7 +39,7 @@ const timedOut = () => unavailable('官网页面本轮检查超时，将等待�
 /** Dedicated read-only product-page runner. No account profile, API requests, or purchase steps. */
 export async function createPickupBrowser(options = {}) {
   const navigationTimeout = Number(options.navigationTimeoutMs ?? 30000);
-  const checkTimeout = Number(options.checkTimeoutMs ?? 20000);
+  const checkTimeout = Number(options.checkTimeoutMs ?? 35000);
   if (![navigationTimeout, checkTimeout].every(value => Number.isFinite(value) && value > 0 && value <= 120000)) throw new Error('浏览器超时设置无效。');
   let browser = options.browser || options.page?.context?.().browser?.() || null;
   let ownsBrowser = false, context = null, page = null, ownsContext = false;
@@ -107,7 +107,14 @@ export async function createPickupBrowser(options = {}) {
     signal?.addEventListener('abort', externalAbort, { once: true });
     if (signal?.aborted) externalAbort();
     const runToken = `server-${randomUUID()}`;
-    let timer, abortListener;
+    let timer, abortListener, responsePage, officialHttpStatus = null;
+    const observeResponse = response => {
+      try {
+        const url = new URL(response.url()), status = response.status();
+        if (url.origin === 'https://www.apple.com.cn' && url.pathname === '/shop/fulfillment-messages'
+          && response.request().frame() === responsePage.mainFrame() && Number.isInteger(status) && status >= 400 && status <= 599) officialHttpStatus = status;
+      } catch { /* Ignore non-page/service-worker responses and malformed URLs. */ }
+    };
     const aborted = new Promise(resolve => {
       abortListener = () => {
         const current = page;
@@ -122,12 +129,24 @@ export async function createPickupBrowser(options = {}) {
       const initialization = preparePage(controller.signal);
       const current = await track(initializing, initialization);
       interrupted(controller.signal);
+      responsePage = current;
+      current.on('response', observeResponse);
       if (current.url() !== config.productUrl) await current.goto(config.productUrl, { waitUntil: 'domcontentloaded', timeout: navigationTimeout });
       interrupted(controller.signal);
       if (!isReadonlyProductUrl(current.url())) return { ok: true, stage: 'blocked', stores: [], reason: '官网已离开目标商品页，监控已停止。', requiresHuman: true, retryable: false };
       timer = setTimeout(() => controller.abort('timeout'), checkTimeout);
       const installed = await current.evaluate(() => typeof globalThis.__shikePickupAdapter?.check === 'function');
       if (!installed) await current.evaluate(bootstrap);
+      interrupted(controller.signal);
+      try {
+        const readiness = await current.waitForFunction(target => globalThis.__shikePickupAdapter?.ready(target) === true, config, { polling: 100, timeout: Math.min(15000, checkTimeout) });
+        await readiness.dispose();
+      } catch (error) {
+        if (controller.signal.aborted || error.name !== 'TimeoutError') throw error;
+        await retirePage();
+        if (officialHttpStatus !== null) return { ...unavailable(`官网供货信息请求失败（HTTP ${officialHttpStatus}），本轮没有库存结果。`, 'OFFICIAL_HTTP_ERROR'), diagnostic: { step: 'server-browser', code: 'OFFICIAL_HTTP_ERROR', httpStatus: officialHttpStatus } };
+        return unavailable('官网取货供货信息尚未加载，将等待下一次检查。', 'READINESS_TIMEOUT');
+      }
       interrupted(controller.signal);
       const result = await current.evaluate(({ target, token }) => globalThis.__shikePickupAdapter.check(target, token), { target: config, token: runToken });
       if (result?.retryable === true && !result.requiresHuman && result.stage !== 'checked') await retirePage();
@@ -142,6 +161,7 @@ export async function createPickupBrowser(options = {}) {
       clearTimeout(timer);
       signal?.removeEventListener('abort', externalAbort);
       controller.signal.removeEventListener('abort', abortListener);
+      responsePage?.off('response', observeResponse);
       if (activeController === controller) activeController = null;
     }
   }
