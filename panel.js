@@ -1,6 +1,7 @@
 const $=id=>document.getElementById(id);
 const extension=typeof chrome!=='undefined'&&Boolean(chrome.runtime?.id);
 const embedded=new URLSearchParams(location.search).has('embedded');
+$('pickup-mode').href='monitor.html'+location.search;
 if(!extension)document.documentElement.classList.add('preview-mode');
 if(embedded)document.body.classList.add('embedded');else $('collapse').hidden=true;
 const PRESETS={duo:{partNumber:'MK2T4CH/A',productUrl:'https://www.apple.com.cn/shop/product/MK2T4CH/A'},test:{partNumber:'MJYJ4CH/A',productUrl:'https://www.apple.com.cn/shop/buy-iphone/iphone-18-pro/mjyj4ch/a'}};

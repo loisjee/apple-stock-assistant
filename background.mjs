@@ -1,4 +1,5 @@
 import {DEFAULT_CONFIG, normalizeConfig, isAppleShopUrl, isSafeEntryUrl} from './core.mjs';
+import {installPickupMonitor} from './pickup-monitor.mjs';
 
 // Page controls only: no request endpoints, cookie access, or payment actions.
 const ALARM='shike-page-recovery';
@@ -155,12 +156,13 @@ async function handle(message,sender){
     default:throw new Error('未知操作。');
   }
 }
-chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{handle(message,sender).then(state=>sendResponse({ok:true,state}),error=>sendResponse({ok:false,error:brief(error.message)}));return true;});
+chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{if(typeof message?.type==='string'&&message.type.startsWith('PICKUP_'))return false;handle(message,sender).then(state=>sendResponse({ok:true,state}),error=>sendResponse({ok:false,error:brief(error.message)}));return true;});
 chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name===ALARM)void tick('recovery');});
 chrome.tabs.onUpdated.addListener((id,change)=>{if(change.status==='complete')void read().then(app=>{if(app.running&&app.tabId===id)void tick('navigation',app.order.token);});});
 chrome.tabs.onRemoved.addListener(id=>{void read().then(app=>{if(app.tabId===id&&app.running)void pauseRun(app.order.token,'执行标签已关闭。请先检查购物袋或订单，不会自动新建并重放。',{uncertain:app.order.uncertain,error:false});});});
-chrome.notifications.onClicked.addListener(()=>{void read().then(app=>{if(Number.isInteger(app.tabId))void chrome.tabs.update(app.tabId,{active:true}).catch(()=>{});});});
+chrome.notifications.onClicked.addListener(id=>{if(String(id).startsWith('pickup-'))return;void read().then(app=>{if(Number.isInteger(app.tabId))void chrome.tabs.update(app.tabId,{active:true}).catch(()=>{});});});
 async function initialize(){const app=await update(a=>{if(a.order.lastAction?.status==='dispatching'){a.running=false;a.order.status='paused';a.order.uncertain=true;a.order.lastAction.status='uncertain';a.nextRetryAt=0;a.order.message='后台重启，按钮执行结果不确定。请核对官网后继续，不会自动重复点击。';}});await reconcileAlarm();if(app.running)void tick('recovery',app.order.token);}
 chrome.runtime.onStartup.addListener(()=>{void initialize();});
 chrome.runtime.onInstalled.addListener(()=>{void initialize();});
+installPickupMonitor(chrome);
 void initialize();

@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import {webcrypto} from 'node:crypto';
 import * as core from '../core.mjs';
 
-const source=(await readFile(new URL('../background.mjs',import.meta.url),'utf8')).replace(/^import[^\n]+\n/,'');
+const source=(await readFile(new URL('../background.mjs',import.meta.url),'utf8')).replace(/^import[^\n]+\n/gm,'');
 const clone=value=>structuredClone(value);
 const entry=core.DEFAULT_CONFIG.productUrl;
 const deferred=()=>{let resolve,reject;const promise=new Promise((done,fail)=>{resolve=done;reject=fail;});return {resolve,reject,promise};};
@@ -38,7 +38,7 @@ async function worker({saved,probe,action,reload,scheduleAvailable=true,tabUrl=e
         throw new Error('unexpected message');
       }},
   };
-  const context=vm.createContext({chrome,...core,URL,AbortController,crypto:webcrypto,Date:ClockDate,console,
+  const context=vm.createContext({chrome,...core,installPickupMonitor(){},URL,AbortController,crypto:webcrypto,Date:ClockDate,console,
     setTimeout:(fn,delay)=>{const id=++timerId;timers.set(id,{fn,at:now+delay});return id;},clearTimeout:id=>timers.delete(id),
     fetch:()=>{calls.fetch++;throw new Error('network APIs forbidden');}});
   new vm.Script(source,{filename:'background.mjs'}).runInContext(context);
@@ -55,6 +55,18 @@ test('idle initialization does not open tabs or use request APIs; web pages cann
   assert.equal(w.calls.created,0);assert.equal(w.calls.fetch,0);
   const response=await w.send({type:'START'},{id:'other-extension',url:entry,tab:{id:7}});
   assert.equal(response.ok,false);assert.equal(w.calls.created,0);
+});
+
+test('purchase worker leaves pickup messages and notifications to the independent monitor',async()=>{
+  const w=await worker({saved:stored()});
+  let responded=false;
+  const taken=w.events.message[0]({type:'PICKUP_GET_STATE'},{id:'fixture-extension',url:'chrome-extension://fixture-extension/monitor.html'},()=>{responded=true;});
+  assert.equal(taken,false);
+  w.events.notification[0]('pickup-available');
+  await w.flush();
+  assert.equal(responded,false);
+  assert.equal(w.calls.updates,0);
+  assert.equal(w.calls.actions.length,0);
 });
 
 test('unavailable product refreshes respect interval and maximum, without any purchase click',async()=>{
