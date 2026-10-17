@@ -1,0 +1,11 @@
+.git
+node_modules
+test-artifacts
+work
+outputs
+data
+.env
+.env.*
+*.zip
+*.log
+.DS_Store

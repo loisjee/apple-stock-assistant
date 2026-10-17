@@ -45,11 +45,13 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = internals;
   if (typeof document === 'undefined') { globalThis.__shikePickupInternals = internals; return; }
   const runtime = globalThis.chrome?.runtime;
-  if (!runtime?.onMessage || window.top !== window) return;
+  const serverInit = !runtime?.onMessage && globalThis.__shikePickupServerInit === true;
+  if (serverInit) delete globalThis.__shikePickupServerInit;
+  if (window.top !== window || (!runtime?.onMessage && !serverInit)) return;
   if (globalThis.__shikePickupPageInstalled) return;
   globalThis.__shikePickupPageInstalled = true;
   let active = null;
-  const extensionOrigin = runtime.getURL('');
+  const extensionOrigin = runtime?.getURL?.('') || '';
 
   function visible(element) {
     if (!element?.isConnected || element.closest('[hidden],[inert],[aria-hidden="true"]')) return false;
@@ -444,25 +446,36 @@
       return response('waitingPage', '官网取货页面结构或控件暂不可用，将等待下一次检查。', { retryable: true, diagnostic });
     }
   }
-  runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (sender?.id !== runtime.id || sender.tab || sender.url && !sender.url.startsWith(extensionOrigin) || !message || typeof message !== 'object') return false;
-    if (message.type === 'PICKUP_PAGE_CANCEL') {
-      if (active && (!message.runToken || message.runToken === active.token)) cancelRun(active);
-      sendResponse({ ok: true, cancelled: true }); return false;
-    }
-    if (message.type !== 'PICKUP_PAGE_CHECK') return false;
-    const config = message.config || {}, token = message.runToken;
+  function requestCheck(config = {}, token) {
+    config = config && typeof config === 'object' ? config : {};
     if (typeof token !== 'string' || !token || token.length > 120 || !validSku(config.partNumber) || typeof config.address !== 'string' || !tidy(config.address) || config.address.length > 200) {
-      sendResponse({ ok: false, error: '监控商品编号、查询位置或运行标识无效。' }); return false;
+      return Promise.resolve({ ok: false, error: '监控商品编号、查询位置或运行标识无效。' });
     }
-    if (!allowedPage(location.href)) { sendResponse(response('blocked', '仅能在苹果中国官网具体商品页监控库存。', { requiresHuman: true, retryable: false })); return false; }
+    if (!allowedPage(location.href)) return Promise.resolve(response('blocked', '仅能在苹果中国官网具体商品页监控库存。', { requiresHuman: true, retryable: false }));
     const signature = JSON.stringify([tidy(config.partNumber).toUpperCase(), tidy(config.address), Number(config.maxStores) || 10]);
-    if (active && !active.cancelled && active.token === token && active.signature === signature) { active.promise.then(sendResponse); return true; }
+    if (active && !active.cancelled && active.token === token && active.signature === signature) return active.promise;
     if (active) cancelRun(active);
     const run = { token, signature, config, cancelled: false, wakeWaiters: new Set(), deadline: Date.now() + 14500, maxStores: Math.max(1, Math.min(20, Number(config.maxStores) || 10)) };
     active = run;
     run.promise = check(run).finally(() => { if (active === run) active = null; });
-    run.promise.then(sendResponse, () => sendResponse({ ok: false, error: '读取官网门店状态失败。' }));
+    return run.promise;
+  }
+  function requestCancel(token) {
+    if (active && (!token || token === active.token)) cancelRun(active);
+    return { ok: true, cancelled: true };
+  }
+  if (serverInit) {
+    // Installed only by an explicit server bootstrap in its dedicated browser.
+    // The extension's isolated world never publishes a page-origin command API.
+    Object.defineProperty(globalThis, '__shikePickupAdapter', {
+      value: Object.freeze({ check: requestCheck, cancel: requestCancel }), configurable: false, writable: false,
+    });
+  }
+  if (runtime?.onMessage) runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (sender?.id !== runtime.id || sender.tab || sender.url && !sender.url.startsWith(extensionOrigin) || !message || typeof message !== 'object') return false;
+    if (message.type === 'PICKUP_PAGE_CANCEL') { sendResponse(requestCancel(message.runToken)); return false; }
+    if (message.type !== 'PICKUP_PAGE_CHECK') return false;
+    requestCheck(message.config, message.runToken).then(sendResponse, () => sendResponse({ ok: false, error: '读取官网门店状态失败。' }));
     return true;
   });
 })();

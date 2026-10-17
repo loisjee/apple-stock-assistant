@@ -37,7 +37,7 @@ async function fixture(t, html, url = skuUrl) {
   try { browser = await chromium.launch({ headless: true, channel: 'chrome' }); } catch { browser = await chromium.launch({ headless: true }); }
   t.after(() => browser.close());
   const page = await browser.newPage();
-  await page.route('**/*', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<html><head><title>Pickup fixture</title></head><body></body></html>' }));
+  await page.route('**/*', route => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: '<html><head><title>Pickup fixture</title></head><body></body></html>' }));
   await page.goto(url); await page.setContent(html);
   await page.evaluate(() => {
     window.cartClicks = 0; window.continueClicks = 0; window.storeClicks = 0; window.overlayEvents = []; window.monitorScrolls = 0;
@@ -203,4 +203,33 @@ test('Chromium pickup: a check stops at its elapsed deadline rather than continu
   assert.equal(result.stage, 'waitingPage'); assert.equal(result.diagnostic.code, 'PICKUP_TIMEOUT');
   assert.equal(result.stores.length, 0);
   assert.deepEqual(await page.evaluate(() => [window.cartClicks, window.continueClicks, window.storeClicks]), [0, 0, 0]);
+});
+
+test('Chromium pickup: explicit standalone bootstrap works without chrome runtime, remains absent by default, and supports repeated checks', { skip: !chromium }, async t => {
+  let browser;
+  try { browser = await chromium.launch({ headless: true, channel: 'chrome' }); } catch { browser = await chromium.launch({ headless: true }); }
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.route('**/*', route => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: postalFixture() }));
+  await page.goto(skuUrl);
+  await page.evaluate(() => { window.cartClicks = 0; window.continueClicks = 0; window.storeClicks = 0; });
+  await page.addScriptTag({ content: source });
+  assert.equal(await page.evaluate(() => typeof globalThis.__shikePickupAdapter), 'undefined', 'normal page load must not expose a command API');
+  await page.evaluate(() => { globalThis.__shikePickupServerInit = true; });
+  await page.addScriptTag({ content: source });
+  assert.equal(await page.evaluate(() => globalThis.__shikePickupServerInit), undefined, 'explicit init marker is consumed');
+  assert.equal(await page.evaluate(() => typeof globalThis.chrome?.runtime), 'undefined');
+  const check = token => page.evaluate(token => globalThis.__shikePickupAdapter.check({ partNumber: 'MK2T4CH/A', address: '200030', maxStores: 10 }, token), token);
+  const first = await check('standalone-one'); assert.equal(first.stage, 'checked', JSON.stringify(first));
+  assert.equal((await check('standalone-two')).stage, 'checked');
+  assert.equal(await page.evaluate(() => window.searches), 2);
+  assert.deepEqual(await page.evaluate(() => [window.cartClicks, window.continueClicks, window.storeClicks]), [0, 0, 0]);
+  assert.equal((await page.evaluate(() => globalThis.__shikePickupAdapter.check(null, 'bad'))).ok, false);
+});
+
+test('Chromium pickup: extension listener does not publish the standalone page API even with an init marker', { skip: !chromium }, async t => {
+  const { page } = await fixture(t, postalFixture());
+  await page.evaluate(() => { globalThis.__shikePickupServerInit = true; });
+  await page.addScriptTag({ content: source });
+  assert.equal(await page.evaluate(() => typeof globalThis.__shikePickupAdapter), 'undefined');
 });

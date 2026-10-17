@@ -1,0 +1,31 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {PickupMonitor} from '../server/monitor.mjs';
+import {createMonitorServer} from '../server/http.mjs';
+import {DEFAULT_PICKUP_CONFIG} from '../pickup-monitor.mjs';
+
+test('real HTTP API integrates login, validated config, read-only monitor, persisted results and notification state',async t=>{
+  const directory=await mkdtemp(join(tmpdir(),'pickup-http-integration-'));
+  let checks=0;const sent=[];
+  const browser={async check(config){checks++;assert.equal(config.address,'上海市徐汇区');return {ok:true,stage:'checked',stores:[{id:'demo-store',name:'Apple 示例门店',distanceText:'2.3 km',availability:'available',availabilityText:'今天可取货'}]};},async close(){}};
+  const monitor=new PickupMonitor({browser,storePath:join(directory,'state.json'),notify:async p=>sent.push(p)});await monitor.init();
+  const password='integration-test-password-only';const server=createMonitorServer({monitor,password});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await monitor.close();await rm(directory,{recursive:true,force:true});});
+  const root=`http://127.0.0.1:${server.address().port}`;
+  let cookie='';
+  const post=(path,data={})=>fetch(root+path,{method:'POST',headers:{'Content-Type':'application/json','X-Monitor-Request':'1',Cookie:cookie},body:JSON.stringify(data)});
+  const logged=await post('/api/login',{password});assert.equal(logged.status,200);cookie=logged.headers.get('set-cookie').split(';')[0];
+  const config={...DEFAULT_PICKUP_CONFIG,address:'上海市徐汇区'};
+  assert.equal((await post('/api/config',{config:{...config,productUrl:'https://example.test/anything'}})).status,400);
+  assert.equal(checks,0);
+  const saved=await post('/api/config',{config});assert.equal(saved.status,200);assert.equal((await saved.json()).state.notificationsEnabled,true);
+  const checked=await post('/api/check');assert.equal(checked.status,200);
+  const {state}=await checked.json();assert.equal(state.stores[0].availability,'available');assert.equal(state.running,false);assert.equal(state.checks,1);assert.equal(sent.length,1);
+  await post('/api/check');assert.equal(checks,2);assert.equal(sent.length,1,'unchanged availability does not repeat the notification');
+  const disk=JSON.parse(await readFile(join(directory,'state.json'),'utf8'));assert.equal(disk.config.address,config.address);assert.equal(disk.stores[0].name,'Apple 示例门店');assert.ok(!JSON.stringify(disk).includes(password));
+  assert.equal((await post('/api/stop')).status,200);
+});

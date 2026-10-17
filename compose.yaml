@@ -1,0 +1,32 @@
+services:
+  pickup-monitor:
+    build: .
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MONITOR_PORT:-8787}:8787"
+    environment:
+      MONITOR_PASSWORD: ${MONITOR_PASSWORD:?请先在 .env 中设置 MONITOR_PASSWORD}
+      MONITOR_PUBLIC_ORIGIN: ${MONITOR_PUBLIC_ORIGIN:-}
+      MONITOR_WEBHOOK_URL: ${MONITOR_WEBHOOK_URL:-}
+      HOST: 0.0.0.0
+      PORT: 8787
+      MONITOR_DATA_DIR: /app/data
+    volumes:
+      - pickup-data:/app/data
+    shm_size: 1gb
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=1g
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('node:http').get('http://127.0.0.1:8787/healthz',{headers:{host:new URL(process.env.MONITOR_PUBLIC_ORIGIN||'http://127.0.0.1:8787').host}},r=>{r.resume();process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+volumes:
+  pickup-data:
