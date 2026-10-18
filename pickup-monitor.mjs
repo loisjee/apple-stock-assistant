@@ -1,3 +1,4 @@
+import {restoreStockHistory, recordStockHistory} from './stock-history.mjs';
 import {isSafeEntryUrl, normalizeConfig} from './core.mjs';
 
 // This monitor reads the public pickup dialog through a dedicated product tab.
@@ -27,10 +28,10 @@ export function normalizePickupConfig(input={}){
     intervalSeconds:integerSetting(input.intervalSeconds,60,30,3600,'检查间隔（秒）'),
     maxStores:integerSetting(input.maxStores,10,1,20,'展示门店数'),notifyEnabled:input.notifyEnabled!==false};
 }
-function initial(){return {schemaVersion:1,config:normalizePickupConfig(DEFAULT_PICKUP_CONFIG),running:false,status:'idle',notice:'输入商品配置与当前位置，检查附近门店的自提库存。',error:'',checks:0,lastCheckAt:0,nextCheckAt:0,tabId:null,stores:[],lastNotified:{},stale:false,generation:0,runToken:'',waitingForLoad:false,singleCheck:false};}
+function initial(){return {schemaVersion:1,config:normalizePickupConfig(DEFAULT_PICKUP_CONFIG),running:false,status:'idle',notice:'输入商品配置与当前位置，检查附近门店的自提库存。',error:'',checks:0,lastCheckAt:0,nextCheckAt:0,tabId:null,stores:[],stockHistory:restoreStockHistory(),lastNotified:{},stale:false,generation:0,runToken:'',waitingForLoad:false,singleCheck:false};}
 function restore(raw){
   const value=initial();if(raw?.schemaVersion!==1)return value;
-  try{return {...value,...raw,config:normalizePickupConfig(raw.config),stores:Array.isArray(raw.stores)?raw.stores:[],lastNotified:raw.lastNotified&&typeof raw.lastNotified==='object'&&!Array.isArray(raw.lastNotified)?raw.lastNotified:{}};}catch{return {...value,error:'已存储的监控设置无效，请重新保存。',status:'error'};}
+  try{return {...value,...raw,config:normalizePickupConfig(raw.config),stockHistory:restoreStockHistory(raw.stockHistory),stores:Array.isArray(raw.stores)?raw.stores:[],lastNotified:raw.lastNotified&&typeof raw.lastNotified==='object'&&!Array.isArray(raw.lastNotified)?raw.lastNotified:{}};}catch{return {...value,error:'已存储的监控设置无效，请重新保存。',status:'error'};}
 }
 function cleanStores(values,maxStores){
   if(!Array.isArray(values))throw new Error('门店结果格式不正确。');
@@ -96,7 +97,7 @@ export function installPickupMonitor(chrome){
     let newlyAvailable=[];
     const next=await update(s=>{
       if(!current(s,token))return;
-      s.stores=stores;s.stale=false;s.error='';s.checks++;s.lastCheckAt=Date.now();s.waitingForLoad=false;
+      s.stores=stores;s.stale=false;s.error='';s.checks++;s.lastCheckAt=Date.now();s.stockHistory=recordStockHistory(s.stockHistory,s.config,stores,s.lastCheckAt);s.waitingForLoad=false;
       const available=stores.filter(store=>store.availability==='available');s.status=available.length?'available':'watching';
       s.notice=available.length?`官网显示 ${available.length} 家门店可自提；请打开官网核对并下单。`:'已检查附近门店，继续等待可自提库存。';
       for(const store of stores){const key=JSON.stringify([s.config.partNumber,s.config.address.toLowerCase(),store.id]);if(store.availability==='unavailable')s.lastNotified[key]=false;else if(store.availability==='available'){if(s.lastNotified[key]!==true)newlyAvailable.push(store);s.lastNotified[key]=true;}}

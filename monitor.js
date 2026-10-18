@@ -30,12 +30,12 @@ function updateControls(){
 }
 function showNotice(){const message=operationError||state?.error||state?.notice||'';setText('notice',message);$('notice').hidden=!message;}
 function render(next){
-  state=next;const config=state.config;const stores=Array.isArray(state.stores)?state.stores.slice(0,config.maxStores):[];const stale=isStale();const nearest=stores.find(store=>store.availability==='available');
+  state=next;StockHistoryView.render(state);const config=state.config;const stores=Array.isArray(state.stores)?state.stores.slice(0,config.maxStores):[];const stale=isStale();const nearest=stores.find(store=>store.availability==='available');
   setText('status-title',stale&&state.status==='available'?'上次发现可自提':LABELS[state.status]||'等待页面反馈');
   setText('status-tag',!extension?'演示模式':'页面读取');
   $('status-dot').className=`status-dot ${state.status==='available'&&!stale?'available':state.running?'running':['paused','error'].includes(state.status)?'paused':''}`;
   setText('status-description',state.error||(state.status==='checking'?'正在读取官网自提门店状态。':!config.address?'先配置目标规格及所在省、市、区县。':state.status==='available'&&nearest?`${stale?'上次结果中首家可自提':'最近可自提（官网排序）'}：${nearest.name}${nearest.distanceText?' · '+nearest.distanceText:''}。请到官网确认。`:state.running?'按设置间隔检查附近门店，发现可自提时提醒。':'配置保存在本机，开始后打开专用官网监控页。'));
-  setText('last-check',state.lastCheckAt?`检查于 ${new Date(state.lastCheckAt).toLocaleTimeString('zh-CN',{hour12:false})}`:'尚未检查');
+  setText('last-check',state.lastCheckAt?`检查于 ${new Date(state.lastCheckAt).toLocaleTimeString('zh-CN',{hour12:false,timeZone:'Asia/Shanghai'})}`:'尚未检查');
   setText('checks',state.checks||0);setText('store-count',stores.length);setText('available-count',stores.filter(store=>store.availability==='available').length);
   setText('product-name',config.productName||config.partNumber);setText('product-meta',config.partNumber);setText('address-summary',config.address||'请设置所在地区');
   setText('notification-label',config.notifyEnabled?'系统提醒已开':'系统提醒已关');

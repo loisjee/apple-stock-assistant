@@ -13,7 +13,7 @@ const store=(availability,id)=>({id,name:`官网排序门店 ${id}`,address:'本
 test('server monitor dashboard with intercepted local API only',{skip:!chromium},async t=>{
   let browser;try{browser=await chromium.launch({channel:'chrome',headless:true});}catch{browser=await chromium.launch({headless:true});}t.after(()=>browser.close());
   const context=await browser.newContext({viewport:{width:900,height:1000},deviceScaleFactor:2});
-  const assets=Object.fromEntries(await Promise.all([['/','index.html'],['/app.js','app.js'],['/style.css','style.css']].map(async([key,file])=>[key,await readFile(new URL(`../server/public/${file}`,import.meta.url),'utf8')])));
+  const assets=Object.fromEntries(await Promise.all([['/','index.html'],['/app.js','app.js'],['/style.css','style.css'],['/stock-history-view.js','../../stock-history-view.js']].map(async([key,file])=>[key,await readFile(new URL(`../server/public/${file}`,import.meta.url),'utf8')])));
   let authenticated=false,state=defaults(),failPath='',expired=false,holdPath='',releaseHold,stateUnauthorizedOnce=false;
   const calls=[],external=[],errors=[];
   await context.route('**/*',async route=>{
@@ -130,6 +130,18 @@ test('server monitor dashboard with intercepted local API only',{skip:!chromium}
     await page.locator('.shell').screenshot({path:fileURLToPath(new URL('../test-artifacts/server-monitor-preview.png',import.meta.url))});
     await page.setViewportSize({width:320,height:720});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     await page.locator('#configure').click();assert.equal(await page.locator('#settings').evaluate(dialog=>dialog.scrollWidth<=dialog.clientWidth),true);await page.locator('#close-settings').click();
+  });
+
+
+  await t.test('server history is rendered and removed when authentication expires',async()=>{
+    const at=Date.parse('2026-10-17T16:04:05Z');
+    state.stockHistory={version:1,startedAt:at,events:[{observedAt:at,kind:'first-observed',partNumber:state.config.partNumber,productName:state.config.productName,location:state.config.address,storeId:'R1',storeName:'测试门店',pickupText:''}]};
+    await page.locator('#check-now').click();await page.locator('#show-history').filter({hasText:'有货记录 · 1'}).waitFor();await page.locator('#show-history').click();
+    assert.match(await page.locator('#history-list').innerText(),/2026-10-18 00:04:05/);
+    assert.equal(await page.locator('#stock-history').evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+    expired=true;await page.evaluate(()=>loadState().catch(()=>{}));
+    assert.equal(await page.locator('#stock-history').evaluate(dialog=>dialog.open),false);assert.equal(await page.locator('#history-list li').count(),0);
+    await page.locator('#password').fill('unit-test-password');await page.locator('#login-button').click();await page.locator('#dashboard').waitFor({state:'visible'});
   });
 
   await t.test('expired authentication returns to login, then logout ends the session',async()=>{

@@ -39,7 +39,7 @@ test('pickup monitor panel in isolated local Chromium', {skip:!chromium},async t
     await page.locator('#configure').click();
     assert.equal(await page.locator('#address').inputValue(),'');
     assert.match(await page.locator('#address').getAttribute('placeholder'),/省份.*城市.*区县/);
-    assert.match(await page.locator('.field-help').innerText(),/无需门牌号.*非地图路线距离/);
+    assert.match(await page.locator('#settings .field-help').innerText(),/无需门牌号.*非地图路线距离/);
     await page.locator('#preset').selectOption('test');
     assert.equal(await page.locator('#product-name-input').inputValue(),'iPhone 18 Pro Max 1TB 冰川蓝色');
     assert.equal(await page.locator('#part-number').inputValue(),'MJYJ4CH/A');
@@ -151,6 +151,37 @@ test('pickup monitor panel in isolated local Chromium', {skip:!chromium},async t
     assert.match(await extensionPage.locator('.store-name').first().innerText(),/^<img/);
     assert.equal(await extensionPage.locator('#available-count').innerText(),'1');
     assert.equal(await extensionPage.locator('.availability.unknown').innerText(),'未知');
+  });
+
+
+  await t.test('arrival history shows Beijing dates, filters targets, exports safely and stays compact',async()=>{
+    await extensionPage.evaluate(()=>{
+      const next=structuredClone(window.fixtureState),at=Date.parse('2026-10-17T16:04:05Z');
+      const event={observedAt:at,kind:'restocked',lastUnavailableAt:at-60000,productName:next.config.productName,partNumber:next.config.partNumber,location:next.config.address,storeId:'R1',storeName:'=SUM(1,2)',distanceText:'1 km',pickupText:'<img src=x onerror=alert(1)>'};
+      next.stockHistory={version:1,startedAt:at-120000,events:[event,{...event,observedAt:at-3600000,storeName:'另一地区',location:'其他地区',kind:'first-observed',lastUnavailableAt:0}],observations:[]};
+      window.fixtureStorageListener({pickupMonitorState:{newValue:next}},'local');
+    });
+    assert.equal(await extensionPage.locator('#show-history').innerText(),'有货记录 · 1');
+    await extensionPage.locator('#show-history').click();
+    assert.match(await extensionPage.locator('#history-list').innerText(),/2026-10-18 00:04:05/);
+    assert.match(await extensionPage.locator('#history-list').innerText(),/上次确认无货：2026-10-18 00:03:05/);
+    assert.equal(await extensionPage.locator('#history-list img').count(),0);
+    assert.equal(await extensionPage.locator('#history-hours').innerText(),'00 时 · 1 店次');
+    assert.equal(await extensionPage.locator('#stock-history').evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+    const downloadPromise=extensionPage.waitForEvent('download');await extensionPage.locator('#export-history').click();
+    const download=await downloadPromise,stream=await download.createReadStream(),chunks=[];for await(const chunk of stream)chunks.push(chunk);
+    const csv=Buffer.concat(chunks).toString('utf8');assert.match(csv,/2026-10-18 00:04:05/);assert.match(csv,/"'=SUM\(1,2\)"/);assert.doesNotMatch(csv,/另一地区/);
+    await extensionPage.locator('#history-scope').selectOption('all');assert.equal(await extensionPage.locator('#history-list li').count(),2);
+    await mkdir(fileURLToPath(new URL('../test-artifacts/',import.meta.url)),{recursive:true});
+    await extensionPage.evaluate(()=>{
+      const next=structuredClone(window.fixtureState),at=Date.parse('2026-10-17T16:04:05Z');
+      const example={observedAt:at,kind:'restocked',lastUnavailableAt:at-60000,partNumber:'MK2P4CH/A',productName:'iPhone Duo 512GB 星光白色',location:'上海市杨浦区（界面示例）',storeId:'demo1',storeName:'五角场（示例）',distanceText:'1.77 公里',pickupText:'今天可取货（示例）'};
+      next.config={...next.config,partNumber:example.partNumber,address:example.location};
+      next.stockHistory={version:1,startedAt:at-86400000,events:[{...example,observedAt:at-3600000,kind:'first-observed',lastUnavailableAt:0,storeId:'demo2',storeName:'环球港（示例）'},example],observations:[]};
+      window.fixtureStorageListener({pickupMonitorState:{newValue:next}},'local');
+    });
+    await extensionPage.locator('#stock-history').screenshot({path:fileURLToPath(new URL('../test-artifacts/stock-history-preview.png',import.meta.url))});
+    await extensionPage.locator('#close-history').click();
   });
 
   await t.test('embedded navigation preserves query and collapse uses exact trusted parent',async()=>{

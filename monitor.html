@@ -1,14 +1,15 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Apple · 门店库存</title><link rel="stylesheet" href="monitor.css"><script src="monitor.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Apple · 门店库存</title><link rel="stylesheet" href="monitor.css"><script src="stock-history-view.js" defer></script><script src="monitor.js" defer></script></head>
 <body>
   <main class="panel" aria-label="Apple 门店库存监控">
-    <header><div class="brand"><span class="brand-icon" aria-hidden="true">⌖</span><strong>Apple · 门店库存</strong><small>v0.4</small></div><button id="collapse" class="icon-button" title="收起" aria-label="收起面板">−</button></header>
+    <header><div class="brand"><span class="brand-icon" aria-hidden="true">⌖</span><strong>Apple · 门店库存</strong><small>v0.5</small></div><button id="collapse" class="icon-button" title="收起" aria-label="收起面板">−</button></header>
     <nav aria-label="功能切换"><a id="purchase-link" href="panel.html">抢购流程</a><span class="selected" aria-current="page">库存监控</span></nav>
     <section class="status-card" aria-live="polite"><div class="status-line"><span id="status-dot" class="status-dot"></span><strong id="status-title">等待设置</strong><span id="status-tag" class="tag">页面读取</span></div><p id="status-description">填写目标规格与所在地区。</p><div class="next-line"><span id="last-check">尚未检查</span><span id="next-check">每 60 秒</span></div></section>
-    <section class="metrics" aria-label="检查统计"><div><span>已检查</span><strong id="checks">0</strong></div><div><span>门店</span><strong id="store-count">0</strong></div><div><span>上次有货</span><strong id="available-count">0</strong></div></section>
+    <section class="metrics" aria-label="检查统计"><div><span>已检查</span><strong id="checks">0</strong></div><div><span>门店</span><strong id="store-count">0</strong></div><div><span>有货门店</span><strong id="available-count">0</strong></div></section>
     <section class="product"><div class="section-top"><span>目标规格</span><button id="configure" class="text-button">配置 ↗</button></div><h1 id="product-name">iPhone Duo 1TB 星光白色</h1><p id="product-meta">MK2T4CH/A</p><div class="location-line"><span aria-hidden="true">⌖</span><span id="address-summary">请设置所在地区</span></div></section>
     <section class="stores-section" aria-label="附近自提门店"><div class="section-top"><span>附近自提门店</span><span id="freshness">等待首次检查</span></div><ol id="stores"></ol><p id="empty-stores" class="empty-stores">设置后开始监控，显示官网返回的附近门店。</p></section>
+    <div class="history-entry"><button id="show-history" class="text-button" disabled>有货记录 · 0</button><span>北京时间 · 自动保存</span></div>
     <div id="notice" class="notice" role="status" hidden></div>
     <footer><div class="actions"><button id="toggle" class="button primary">开始监控</button><button id="check-now" class="button secondary">立即检查</button></div><div class="footer-links"><button id="open-monitor">打开监控页</button><button id="test-notification">测试提醒</button><span id="notification-label">系统提醒已开</span></div><p id="fineprint" class="fineprint">按官网附近门店顺序展示 · 仅提醒，不加购或下单</p></footer>
   </main>
@@ -24,4 +25,13 @@
     <p class="settings-note">只读取官网页面的自提状态。页面异常或结果过期时显示“未知 / 上次结果”；需要验证码或手动选择地区时会暂停提示。浏览器关闭期间不会检查。</p>
     <p id="settings-error" class="form-error" role="alert" hidden></p><button id="save-settings" class="button primary wide" type="submit">保存配置</button>
   </form></dialog>
+
+  <dialog id="stock-history" aria-labelledby="history-title">
+    <div class="dialog-heading"><div><span class="eyebrow">STOCK HISTORY</span><h2 id="history-title">有货记录</h2></div><button id="close-history" class="icon-button" aria-label="关闭有货记录">×</button></div>
+    <div class="history-toolbar"><label>查看范围<select id="history-scope"><option value="current">当前商品与地区</option><option value="all">全部历史配置</option></select></label><button id="export-history" class="text-button">导出 CSV</button></div>
+    <p id="history-summary" class="field-help"></p><div id="history-hours" aria-label="按北京时间小时统计门店有货次数"></div>
+    <p class="field-help">小时统计按门店计次，同一轮多店有货分别计数，未按监控时长校正。检测时间并非官网准确放货时间；检查间隔、暂停和失败会影响统计。</p>
+    <ol id="history-list"></ol><p id="history-since" class="field-help"></p>
+    <p class="field-help">保留最近 500 条记录。持续有货不重复记录；确认无货后再次有货另记一条。重启、保存配置和关闭提醒不清除记录。长期分析请定期导出。</p>
+  </dialog>
 </body></html>

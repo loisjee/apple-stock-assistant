@@ -3,7 +3,7 @@ ENV NODE_ENV=production PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npx playwright install --with-deps chromium && npm cache clean --force
-COPY core.mjs pickup-monitor.mjs pickup-page.js ./
+COPY core.mjs pickup-monitor.mjs stock-history.mjs stock-history-view.js pickup-page.js ./
 COPY server ./server
 RUN mkdir -p /app/data && chown -R node:node /app /ms-playwright
 USER node

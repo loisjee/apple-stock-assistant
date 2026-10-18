@@ -1,3 +1,4 @@
+import {restoreStockHistory, recordStockHistory} from '../stock-history.mjs';
 import {readFile,mkdir,writeFile,rename,unlink,chmod} from 'node:fs/promises';
 import {dirname,resolve} from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
@@ -26,14 +27,14 @@ function cleanStores(input,maxStores=20){
   }
   return values;
 }
-const initial=config=>({schemaVersion:1,config,running:false,status:'idle',notice:'填写目标商品与当前位置后开始监控。',error:'',checks:0,lastCheckAt:0,nextCheckAt:0,stores:[],stale:false,history:[],errors:[],lastNotified:{},notification:{configured:false,lastSuccessAt:0,lastError:''},generation:0});
+const initial=(config,now)=>({schemaVersion:1,config,running:false,status:'idle',notice:'填写目标商品与当前位置后开始监控。',error:'',checks:0,lastCheckAt:0,nextCheckAt:0,stores:[],stale:false,stockHistory:restoreStockHistory(null,now),history:[],errors:[],lastNotified:{},notification:{configured:false,lastSuccessAt:0,lastError:''},generation:0});
 const keyFor=(config,id)=>createHash('sha256').update(JSON.stringify([config.partNumber,config.address.toLowerCase(),id])).digest('hex');
 
 export class PickupMonitor{
   constructor({browser,storePath=resolve('data/state.json'),notify=null,now=Date.now,timers={setTimeout,clearTimeout}}={}){
     if(!browser||typeof browser.check!=='function')throw new Error('库存页面读取器未配置。');
     this.browser=browser;this.storePath=resolve(storePath);this.notify=typeof notify==='function'?notify:null;this.now=now;this.timers=timers;
-    this._data=initial(normalizeServerConfig(DEFAULT_PICKUP_CONFIG));this._data.notification.configured=Boolean(this.notify);
+    this._data=initial(normalizeServerConfig(DEFAULT_PICKUP_CONFIG),this.now());this._data.notification.configured=Boolean(this.notify);
     this._persistQueue=Promise.resolve();this._timer=null;this._flight=null;this._flightGeneration=null;this._controller=null;this._initialized=false;this._closed=false;this._initializing=null;
   }
   state(){return clone(this._data);}
@@ -47,9 +48,10 @@ export class PickupMonitor{
     if(this._initialized)return this.state();if(this._initializing)return this._initializing;
     this._initializing=(async()=>{
       try{
-        const content=await readFile(this.storePath,'utf8');if(Buffer.byteLength(content)>1024*1024)throw new Error('oversized state');const saved=JSON.parse(content);
+        const content=await readFile(this.storePath,'utf8');if(Buffer.byteLength(content)>8*1024*1024)throw new Error('oversized state');const saved=JSON.parse(content);
         if(saved?.schemaVersion!==1)throw new Error('invalid schema');
-        const config=normalizeServerConfig(saved.config),restored=initial(config);
+        const config=normalizeServerConfig(saved.config),restored=initial(config,this.now());
+        restored.stockHistory=restoreStockHistory(saved.stockHistory,this.now());
         restored.running=saved.running===true;restored.status=restored.running?'watching':'paused';restored.notice=restored.running?'服务已恢复，将继续检查附近门店。':'已恢复设置；监控处于暂停状态。';
         restored.checks=Number.isSafeInteger(saved.checks)&&saved.checks>=0?saved.checks:0;restored.lastCheckAt=Number.isFinite(saved.lastCheckAt)?saved.lastCheckAt:0;restored.stores=cleanStores(saved.stores,config.maxStores);restored.stale=restored.stores.length>0;
         restored.history=Array.isArray(saved.history)?saved.history.slice(-100).map(row=>({at:Number(row.at)||0,status:text(row.status,20),available:Number(row.available)||0,summary:text(row.summary)})):[];
@@ -101,6 +103,7 @@ export class PickupMonitor{
     if(result?.requiresHuman){this._data.running=false;this._data.status='paused';this._data.stale=this._data.stores.length>0;this._data.notice='官网要求人工处理安全验证或位置确认，监控已暂停。';this._data.nextCheckAt=0;this._history('paused',this._data.notice);await this._persist();return this.state();}
     const stores=result?.ok===true?cleanStores(result.stores,config.maxStores):[];
     if(!stores.length){const status=result?.diagnostic?.httpStatus,officialFailure=result?.diagnostic?.code==='OFFICIAL_HTTP_ERROR'&&Number.isInteger(status)&&status>=400&&status<=599;return this._failure(generation,officialFailure?`官网供货信息请求失败（HTTP ${status}），本轮没有库存结果。`:'官网暂未展示可识别的附近门店，保留上次结果并稍后重试。',{counted:true});}
+    this._data.stockHistory=recordStockHistory(this._data.stockHistory,config,stores,this._data.lastCheckAt);
     this._data.stores=stores;this._data.stale=false;this._data.error='';const available=stores.filter(store=>store.availability==='available');this._data.status=available.length?'available':'watching';
     this._data.notice=available.length?`官网显示 ${available.length} 家门店可自提，请到官网核对。`:'已检查附近门店，继续等待可自提库存。';this._data.nextCheckAt=this._data.running?this.now()+config.intervalSeconds*1000:0;
     const newlyAvailable=[];

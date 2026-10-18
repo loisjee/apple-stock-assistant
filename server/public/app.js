@@ -4,7 +4,7 @@ const LABELS={idle:'等待开始',checking:'正在检查官网',watching:'正在
 let state=null,authenticated=false,busy=false,polling=false,operationError='',connectionError='',viewRevision=0;
 const setText=(id,value)=>{$(id).textContent=String(value??'');};
 function showLogin(message=''){
-  viewRevision++;authenticated=false;state=null;operationError='';connectionError='';
+  viewRevision++;authenticated=false;state=null;StockHistoryView.render(null);operationError='';connectionError='';
   $('loading').hidden=true;$('dashboard').hidden=true;$('logout').hidden=true;$('login-view').hidden=false;
   if($('settings').open)$('settings').close();
   setText('login-error',message);$('login-error').hidden=!message;syncControls();
@@ -39,10 +39,10 @@ function updateClock(){
   $('status-dot').className=`status-dot ${connectionError?'paused':state.status==='available'&&!old?'available':state.running?'running':['paused','error'].includes(state.status)?'paused':''}`;
 }
 function render(next){
-  state=next;const config=state.config;const stores=Array.isArray(state.stores)?state.stores.slice(0,config.maxStores):[];
+  state=next;StockHistoryView.render(state);const config=state.config;const stores=Array.isArray(state.stores)?state.stores.slice(0,config.maxStores):[];
   const firstAvailable=stores.find(store=>store.availability==='available');
   setText('status-description',state.error||(state.status==='checking'?'服务器正在读取官网自提状态。':!config.address?'先配置目标规格与所在省、市、区县。':state.status==='available'&&firstAvailable?`官网列表首家可自提：${firstAvailable.name}。请到官网核对。`:state.running?'服务器会按设置间隔持续检查附近门店。':'配置已保存在服务器，开始后持续检查官网页面。'));
-  setText('last-check',state.lastCheckAt?`检查于 ${new Date(state.lastCheckAt).toLocaleTimeString('zh-CN',{hour12:false})}`:'尚未检查');
+  setText('last-check',state.lastCheckAt?`检查于 ${new Date(state.lastCheckAt).toLocaleTimeString('zh-CN',{hour12:false,timeZone:'Asia/Shanghai'})}`:'尚未检查');
   setText('checks',state.checks||0);setText('store-count',stores.length);setText('available-count',stores.filter(store=>store.availability==='available').length);
   setText('product-name',config.productName||config.partNumber);setText('product-meta',config.partNumber);setText('address-summary',config.address||'请设置所在地区');
   const push=Boolean(state.notificationsEnabled&&config.notifyEnabled);

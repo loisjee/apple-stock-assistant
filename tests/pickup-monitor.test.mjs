@@ -167,3 +167,22 @@ test('only pickup notifications focus the dedicated monitor tab and closing it p
   w.events.notification[0]('pickup-available');await w.flush();assert.deepEqual(w.calls.updates,[{id:9,active:true}]);
   w.events.tabRemoved[0](123);await w.flush();assert.equal(w.snapshot().running,true);w.events.tabRemoved[0](9);await w.flush();assert.equal(w.snapshot().running,false);assert.equal(w.alarms.size,0);
 });
+
+test('stock arrivals persist independently of disabled/failed notifications, errors, restarts and config changes',async()=>{
+  let mode='available';const options={probe:()=>{if(mode==='error')throw new Error('offline');return result(mode);},notification:()=>{throw new Error('notification denied');}};
+  const w=await worker(options);await w.config({notifyEnabled:false});await w.check();
+  const first=w.snapshot().stockHistory.events[0];assert.equal(first.observedAt,w.snapshot().lastCheckAt);assert.equal(first.storeName,store().name);assert.equal(w.calls.notifications.length,0);
+  await w.config({notifyEnabled:true});await w.check();await w.check();assert.equal(w.snapshot().stockHistory.events.length,1);
+  mode='error';await w.check();mode='unknown';await w.check();mode='available';await w.check();assert.equal(w.snapshot().stockHistory.events.length,1);
+  const resumed=await worker({...options,saved:w.snapshot()});await resumed.check();assert.deepEqual(resumed.snapshot().stockHistory.events,[first]);
+  mode='unavailable';await resumed.check();const lastUnavailableAt=resumed.snapshot().lastCheckAt;mode='available';await resumed.check();
+  assert.equal(resumed.snapshot().stockHistory.events.length,2);assert.equal(resumed.snapshot().stockHistory.events[1].kind,'restocked');assert.equal(resumed.snapshot().stockHistory.events[1].lastUnavailableAt,lastUnavailableAt);
+  await resumed.config({address:'上海市杨浦区'});await resumed.check();assert.equal(resumed.snapshot().stockHistory.events.length,3);
+  await resumed.config();await resumed.check();assert.equal(resumed.snapshot().stockHistory.events.length,3,'returning to a target keeps its baseline');
+});
+
+test('legacy extension snapshot does not backfill availability before the first fresh check',async()=>{
+  const old=await worker();await old.config();const saved=old.snapshot();delete saved.stockHistory;saved.stores=[store()];saved.lastCheckAt=Date.now()-86400000;
+  const w=await worker({saved,probe:()=>result('available')});assert.equal(w.snapshot().stockHistory.events.length,0);await w.check();
+  assert.equal(w.snapshot().stockHistory.events.length,1);assert.notEqual(w.snapshot().stockHistory.events[0].observedAt,saved.lastCheckAt);
+});

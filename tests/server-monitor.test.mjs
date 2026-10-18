@@ -113,3 +113,23 @@ test('state snapshots cannot mutate configuration and corrupt persisted state fa
   const w=await fixture(t);const state=w.monitor.state();state.config.address='injected';assert.equal(w.monitor.state().config.address,'');assert.throws(()=>new PickupMonitor({browser:{}}));
   const corrupt=await fixture(t,{saved:{schemaVersion:1,config:{...config,productUrl:'https://evil.invalid'}}});assert.equal(corrupt.monitor.state().running,false);assert.equal(corrupt.monitor.state().status,'error');assert.match(corrupt.monitor.state().error,/无法读取/);
 });
+
+test('server arrival events survive notification failure, restart, region changes and preserve exact observation times',async t=>{
+  let mode='available';const w=await fixture(t,{check:()=>{if(mode==='error')throw new Error('offline');return result(mode);},notify:()=>{throw new Error('delivery failed');}});
+  await w.save({notifyEnabled:false});await w.monitor.checkNow();const first=w.monitor.state().stockHistory.events[0];assert.equal(first.observedAt,w.time.now());assert.equal(w.calls.notifications.length,0);
+  await w.save({notifyEnabled:true});await w.time.advance(60000);await w.monitor.checkNow();await w.monitor.checkNow();assert.equal(w.calls.notifications.length,2);assert.deepEqual(w.monitor.state().stockHistory.events,[first]);
+  mode='error';await w.monitor.checkNow();mode='unknown';await w.monitor.checkNow();mode='available';await w.monitor.checkNow();assert.equal(w.monitor.state().stockHistory.events.length,1);
+  const saved=JSON.parse(await readFile(w.storePath,'utf8'));const resumed=await fixture(t,{saved,check:()=>result(mode),notify:null});await resumed.monitor.checkNow();assert.deepEqual(resumed.monitor.state().stockHistory.events,[first]);
+  mode='unavailable';await resumed.time.advance(60000);await resumed.monitor.checkNow();const unavailableAt=resumed.time.now();
+  mode='available';await resumed.time.advance(60000);await resumed.monitor.checkNow();const events=resumed.monitor.state().stockHistory.events;
+  assert.equal(events.length,2);assert.equal(events[1].observedAt,resumed.time.now());assert.equal(events[1].lastUnavailableAt,unavailableAt);assert.equal(events[1].kind,'restocked');
+  await resumed.save({address:'上海市杨浦区'});await resumed.monitor.checkNow();assert.equal(resumed.monitor.state().stockHistory.events.length,3);
+  await resumed.save();await resumed.monitor.checkNow();assert.equal(resumed.monitor.state().stockHistory.events.length,3);
+  const disk=JSON.parse(await readFile(resumed.storePath,'utf8'));assert.deepEqual(disk.stockHistory,resumed.monitor.state().stockHistory);
+});
+
+test('legacy server state has no retroactive stock events',async t=>{
+  const w=await fixture(t);await w.save();const saved=JSON.parse(await readFile(w.storePath,'utf8'));delete saved.stockHistory;saved.lastCheckAt=w.time.now()-86400000;saved.stores=[store()];
+  const upgraded=await fixture(t,{saved,check:()=>result('available')});assert.equal(upgraded.monitor.state().stockHistory.events.length,0);
+  await upgraded.monitor.checkNow();assert.equal(upgraded.monitor.state().stockHistory.events[0].observedAt,upgraded.time.now());
+});

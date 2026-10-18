@@ -48,6 +48,7 @@ test('invalid or oversized JSON does not mutate monitor; static serving cannot e
   assert.equal((await f.post('/api/config',{config:{address:'x'.repeat(17000)}},{Cookie})).status,413);
   assert.equal(f.actions.length,0);
   for(const path of ['/data/state.json','/.env','/server/http.mjs','/../core.mjs'])assert.equal((await f.request(path)).status,404);
+  const script=await f.request('/stock-history-view.js');assert.equal(script.status,200);assert.match(script.headers.get('content-type'),/javascript/);assert.match(await script.text(),/window.StockHistoryView/);
 });
 test('bad login is rate-limited; correct password cannot skip an active cooldown',async t=>{
   const f=await fixture(t);
